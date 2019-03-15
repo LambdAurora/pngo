@@ -84,4 +84,6 @@ namespace color
   {
     return {(red / 255.f), (green / 255.f), (blue / 255.f), (alpha / 255.f)};
   }
+
+  const Color ORANGE = from_int_rgba(255, 64, 0);
 }

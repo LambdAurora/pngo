@@ -1,7 +1,8 @@
+#include <ArduinoSTL.h>
 #include <EEPROM.h>
 // For the RFID module.
 #include "rfid.h"
-#include "color.h"
+#include "options.h"
 
 #define MAX_USERS 4
 #define MAX_PLOTS 4
@@ -10,7 +11,8 @@
 #define BTN_ADD 25
 #define BTN_RESET_WAIT 100
 
-#define BTN_PIN 2
+#define BTN_SELECT_PIN 2
+#define BTN_MENU_PIN 4
 #define RED_PIN 3
 #define GREEN_PIN 5
 #define BLUE_PIN 6
@@ -42,7 +44,6 @@ void init_storage()
     Storage storage{};
     EEPROM.put(addr, storage);
   }
-  read_storage();
 }
 
 /*!
@@ -60,9 +61,9 @@ void read_storage()
     users[1] = {storage.u1_0, storage.u1_1, storage.u1_2, storage.u1_3};
     users[2] = {storage.u2_0, storage.u2_1, storage.u2_2, storage.u2_3};
     users[3] = {storage.u3_0, storage.u3_1, storage.u3_2, storage.u3_3};
-    Serial.print("Loaded "); Serial.print(MAX_USERS) + Serial.println(" users: "); 
+    std::cout << "Loaded " << MAX_USERS << " users: " << std::endl;
     for (size_t i = 0; i < MAX_USERS; i++) {
-      Serial.print(" - "); Serial.println(users[i].to_string());
+      std::cout << " - " << users[i].to_string() << std::endl;
     }
   }
 }
@@ -137,12 +138,60 @@ void clear_color_led()
 }
 
 /* 
- * BASE
+ * Base
  */
 
+class Reflex {
+private:
+  std::vector<MenuOption *> _menu;
+  size_t current_selected = 0;
+  
+public:
+  uint8_t state = 0;
+
+  Reflex() 
+  {
+    _menu.push_back(&BLANK_MENU_OPTION);
+    _menu.push_back(new MenuOption("add user", color::from_int_rgba(0, 255, 0), [](Reflex &reflex) {
+      reflex.state = 1;
+    }));
+    _menu.push_back(new MenuOption("reset", color::from_int_rgba(255, 0, 0), [](Reflex &reflex) { 
+      reflex.reset(); 
+    }));
+  }
+
+  void add_menu_option(MenuOption *option)
+  {
+    _menu.push_back(option);
+  }
+
+  MenuOption* get_current_option() const
+  {
+    return current_selected < _menu.size() ? _menu[current_selected] : nullptr;
+  }
+
+  void reset() {
+    std::cout << " :: System -> Resetting... ";
+    for (size_t i = 0; i < MAX_USERS; i++)
+      users[i] = RFID_ID(0, 0, 0, 0);
+    users[0] = RFID_ID(0,0,0,0);
+    write_storage();
+    current_selected = 0;
+    std::cout << "done!" << std::endl;
+  }
+
+  Reflex& operator++()
+  {
+    current_selected++;
+    if (current_selected >= _menu.size())
+      current_selected = 0;
+    return *this;
+  }
+};
+
+Reflex reflex;
 RFID rfid_card(7, 8);
 RFID_ID test_id(0x98, 0xC0, 0x6D, 0xDE);
-uint8_t state(0);
 uint16_t wait_count(0);
 uint16_t btn_repeat(0);
 
@@ -155,8 +204,10 @@ void setup()
   Serial.println("Starting up 'garage_velo'...");
 
   init_storage();
+  read_storage();
 
-  pinMode(BTN_PIN, INPUT);
+  pinMode(BTN_MENU_PIN, INPUT);
+  pinMode(BTN_SELECT_PIN, INPUT);
   pinMode(RED_PIN, OUTPUT);
   pinMode(GREEN_PIN, OUTPUT);
   pinMode(BLUE_PIN, OUTPUT);
@@ -176,7 +227,7 @@ void loop()
 
   handle_button();
 
-  if (state == 1) {
+  if (reflex.state == 1) {
     on_add();
     return;
   }
@@ -186,7 +237,7 @@ void loop()
     delay(100);
     return;
   }
-  Serial.println("A card is detected!");
+  std::cout << "A card is detected!" << std::endl;
   RFID_ID current_id = rfid_card.get_current_id();
 
   size_t user = -1;
@@ -202,28 +253,32 @@ void loop()
     return;
   }
   
-  Serial.print("Has card: ");
-  Serial.print(rfid_card.has_card_present());
+  std::cout << "Has card: " << rfid_card.has_card_present();
   if (rfid_card.has_new_card()) {
     bool success = false;
     for (size_t i = 0; i < MAX_USERS; i++) {
       if (users[i] == rfid_card.get_current_id()) {
         display_color(GREEN);
-        Serial.println(" Hello user #" + String(i));
+        std::cout << " Hello user #" << String(i) << std::endl;
         success = true;
         break;
       }
     }
     if (!success)
       display_color(RED);
-  } 
-  if (rfid_card.has_card_present()) {
-    Serial.print(" New: ");
-    Serial.print(rfid_card.has_new_card());
-    Serial.print(" ID: ");
-    Serial.print(rfid_card.get_current_id().to_string());
-    Serial.println();
+  } else {
+    for (size_t i = 0; i < MAX_USERS; i++) {
+      if (users[i] == rfid_card.get_current_id()) {
+        std::cout << " :: LOCKER -> Unlock for user #" << String(i) << std::endl;
+        display_color(color::ORANGE);
+        delay(15000);
+        clear_color_led();
+        break;
+      }
+    }
   }
+  if (rfid_card.has_card_present())
+    std::cout << " New: " << rfid_card.has_new_card() << " ID: " << rfid_card.get_current_id().to_string() << std::endl;
   delay(100);
 }
 
@@ -235,7 +290,7 @@ void on_add()
     
     // Cannot add an user because all slots are filled.
     if (i == MAX_USERS) {
-      Serial.println("[P'n'Go][Error] Cannot add new user: all slots are filled.");
+      std::cout << "[P'n'Go][Error] Cannot add new user: all slots are filled." << std::endl;
       display_color(RED);
       delay(500);
       display_color(BLUE);
@@ -243,25 +298,25 @@ void on_add()
       display_color(BLUE);
       delay(500);
       clear_color_led();
-      state = 0;
+      reflex.state = 0;
       return;
     } else if (has_user(id)) {
-      Serial.println("[P'n'Go][Error] Cannot add new user: user already added.");
-      display_color(GREEN);
-      delay(500);
+      std::cout << "[P'n'Go][Error] Cannot add new user: user already added." << std::endl;
       display_color(RED);
+      delay(500);
+      display_color(color::from_int_rgba(255, 0, 255));
       delay(500);
       display_color(BLUE);
       delay(500);
       clear_color_led();
-      state = 0;
+      reflex.state = 0;
       return;
     }
 
     users[i] = id;
-    Serial.println("[P'n'Go] Added user '" + id.to_string() + "'.");
+    std::cout << "[P'n'Go] Added user '" <<  id.to_string() << "'." << std::endl;
     wait_count = 0;
-    state = 0;
+    reflex.state = 0;
   } else {
     if (wait_count >= MAX_WAIT) {
       display_color(BLUE);
@@ -274,22 +329,40 @@ void on_add()
       delay(500);
       clear_color_led();
       wait_count = 0;
-      state = 0;
+      reflex.state = 0;
     }
   }
 }
 
-void reset()
-{
-  for (size_t i = 0; i < MAX_USERS; i++)
-    users[i] = RFID_ID(0, 0, 0, 0);
-  users[0] = RFID_ID(0,0,0,0);
-  write_storage();
-}
 
 void handle_button()
 {
-  auto btn_value = digitalRead(BTN_PIN);
+  auto menu_value = digitalRead(BTN_MENU_PIN);
+  if (menu_value == HIGH) {
+    reflex++;
+    auto option = reflex.get_current_option();
+    std::cout << " :: Menu -> " << option->get_name() << std::endl;
+    display_color(option->get_color());
+    delay(500);
+    clear_color_led();
+  }
+
+  auto select_value = digitalRead(BTN_SELECT_PIN);
+  if (select_value == LOW) return;
+  auto option = reflex.get_current_option();
+  std::cout << " :: Menu -> Executing " << option->get_name() << "..." << std::endl;
+  if (option == nullptr) return;
+  for (size_t i = 0; i < 3; i++) {
+    display_color(option->get_color());
+    delay(50);
+    clear_color_led();
+    delay(50);
+  }
+  option->execute(reflex);
+}
+/*void handle_button()
+{
+  auto btn_value = digitalRead(BTN_MENU_PIN);
   if (btn_value == LOW) {
     if (btn_repeat > BTN_RESET_WAIT) {}
     else if (btn_repeat > BTN_ADD) {
@@ -297,10 +370,10 @@ void handle_button()
     }
     btn_repeat = 0;
   } else if (btn_value == HIGH) {
-    if (btn_repeat == BTN_ADD) Serial.println("btn_helper: Ready to add user.");
+    if (btn_repeat == BTN_ADD) std::cout << "btn_helper: Ready to add user." << std::endl;
     btn_repeat++;
     if (btn_repeat == BTN_RESET_WAIT + 1) {
-      Serial.println("[P'n'Go][WARNING] Resetting...");
+      std::cout << "[P'n'Go][WARNING] Resetting..." << std::endl;
       reset();
       display_color(GREEN);
       delay(10);
@@ -309,4 +382,4 @@ void handle_button()
       clear_color_led();
     }
   }
-}
+}*/
