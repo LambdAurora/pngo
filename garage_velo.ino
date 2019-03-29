@@ -17,8 +17,12 @@
 #define GREEN_PIN 5
 #define BLUE_PIN 6
 
+#define TO_STRING(input) (String(input).c_str())
+#define ID_STR(id) (id.to_string().c_str())
+
 size_t data_current_address = 0;
 RFID_ID users[MAX_USERS] = { {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0} };
+uint8_t doors[MAX_USERS] = { 10, 9, 12, 13 };
 
 struct Storage
 {
@@ -63,7 +67,7 @@ void read_storage()
     users[3] = {storage.u3_0, storage.u3_1, storage.u3_2, storage.u3_3};
     std::cout << "Loaded " << MAX_USERS << " users: " << std::endl;
     for (size_t i = 0; i < MAX_USERS; i++) {
-      std::cout << " - " << users[i].to_string() << std::endl;
+      std::cout << " - " << ID_STR(users[i]) << std::endl;
     }
   }
 }
@@ -170,8 +174,19 @@ public:
     return current_selected < _menu.size() ? _menu[current_selected] : nullptr;
   }
 
+  void init() {
+    std::cout << " :: System -> Initializing...";
+    pinMode(BTN_MENU_PIN, INPUT);
+    pinMode(BTN_SELECT_PIN, INPUT);
+    pinMode(RED_PIN, OUTPUT);
+    pinMode(GREEN_PIN, OUTPUT);
+    pinMode(BLUE_PIN, OUTPUT);
+    for (size_t i = 0; i < MAX_USERS; i++)
+      pinMode(doors[i], OUTPUT);
+  }
+
   void reset() {
-    std::cout << " :: System -> Resetting... ";
+    std::cout << " :: System -> Resetting...";
     for (size_t i = 0; i < MAX_USERS; i++)
       users[i] = RFID_ID(0, 0, 0, 0);
     users[0] = RFID_ID(0,0,0,0);
@@ -202,15 +217,10 @@ void setup()
 {
   Serial.begin(9600);
   Serial.println("Starting up 'garage_velo'...");
+  reflex.init();
 
   init_storage();
   read_storage();
-
-  pinMode(BTN_MENU_PIN, INPUT);
-  pinMode(BTN_SELECT_PIN, INPUT);
-  pinMode(RED_PIN, OUTPUT);
-  pinMode(GREEN_PIN, OUTPUT);
-  pinMode(BLUE_PIN, OUTPUT);
 
   // Initialize the serial communication to the RFID module.
   rfid_card.init();
@@ -259,7 +269,7 @@ void loop()
     for (size_t i = 0; i < MAX_USERS; i++) {
       if (users[i] == rfid_card.get_current_id()) {
         display_color(GREEN);
-        std::cout << " Hello user #" << String(i) << std::endl;
+        std::cout << " Hello user #" << TO_STRING(i + 1) << std::endl;
         success = true;
         break;
       }
@@ -267,24 +277,27 @@ void loop()
     if (!success)
       display_color(RED);
   } else {
-    for (size_t i = 0; i < MAX_USERS; i++) {
-      if (users[i] == rfid_card.get_current_id()) {
-        std::cout << " :: LOCKER -> Unlock for user #" << String(i) << std::endl;
-        display_color(color::ORANGE);
-        delay(15000);
-        clear_color_led();
-        break;
+    if (rfid_card.get_current_id().to_string() != "0000")
+      for (size_t i = 0; i < MAX_USERS; i++) {
+        if (users[i] == rfid_card.get_current_id()) {
+          std::cout << " :: LOCKER -> Unlock for user #" << TO_STRING(i + 1) << std::endl;
+          display_color(color::ORANGE);
+          digitalWrite(doors[i], HIGH);
+          delay(15000);
+          digitalWrite(doors[i], LOW);
+          clear_color_led();
+          break;
+        }
       }
-    }
   }
   if (rfid_card.has_card_present())
-    std::cout << " New: " << rfid_card.has_new_card() << " ID: " << rfid_card.get_current_id().to_string() << std::endl;
+    std::cout << " New: " << rfid_card.has_new_card() << " ID: " << ID_STR(rfid_card.get_current_id()) << std::endl;
   delay(100);
 }
 
 void on_add()
 {
-  if (rfid_card.has_card_present()) {
+  if (rfid_card.has_new_card()) {
     auto i = get_first_null_user();
     auto id = rfid_card.get_current_id();
     
@@ -313,11 +326,15 @@ void on_add()
       return;
     }
 
+    if (id.to_string() == "60ffd0" || id.to_string() == "ffffffffffffffff")
+      return;
+
     users[i] = id;
-    std::cout << "[P'n'Go] Added user '" <<  id.to_string() << "'." << std::endl;
+    std::cout << "[P'n'Go] Added user '" << ID_STR(id) << "'." << std::endl;
     wait_count = 0;
     reflex.state = 0;
   } else {
+    wait_count++;
     if (wait_count >= MAX_WAIT) {
       display_color(BLUE);
       delay(500);
