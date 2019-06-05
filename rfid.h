@@ -1,5 +1,61 @@
+/*
+ * Little RFID library. / Petite bibliothèque RFID.
+ *
+ * Réalisé en 2018-2019 par "LambdAurora".
+ *
+ * Exemple d'utilisation:
+ *
+ * // Instanciation de la carte RFID sur les pins 7 et 8 de la Arduino.
+ * RFID rfid_card(7, 8);
+ *
+ * void init()
+ * {
+ *     // Initialisation du capteur RFID et de la communication serial.
+ *     rfid_card.init();
+ *     delay(10);
+ *     rfid_card.halt();
+ * }
+ *
+ * void loop()
+ * {
+ *     // On mets à jour les informations de la carte.
+ *     rfid_card.update();
+ *
+ *     // Maintenant on peut récupérer des informations!
+ *     // Vérifier qu'il y a une carte.
+ *     if (rfid_card.has_card_present()) {
+ *         // On peut vérifier si le badge vient juste d'être posé sur le capteur, ce qui peut éviter que le code se répète à l'infini pour une action quand on laisse le badge RFID sur le capteur.
+ *         if (rfid_card.has_new_card()) {
+ *             // Une nouveau badge est détecté.
+ *             Serial.println("Une nouveau badge a été détecté!");
+ *         } else {
+ *             // La carte est détecté mais elle était déjà présente sur le capteur.
+ *         }
+ *
+ *         // Pour récupérer l'identifiant c'est simple et un objet a été fait pour:
+ *         RFID_ID identifiant = rfid_card.get_current_id();
+ *         // On peut le récupérer en tant que chaîne de caractères avec to_string():
+ *         Serial.println("Identifiant: " + identifiant.to_string());
+ *         // Si on a un autre objet identifiant on peut alors les comparer:
+ *         RFID_ID id2(0x98, 0xC0, 0x6D, 0xDE);
+ *         if (identifiant == id2) {
+ *             Serial.println("L'identifiant est le même que id2!");
+ *         } else Serial.println("L'identifiant n'est pas le même que id2.");
+ *
+ *         // Attention! des erreurs peuvent survenir dans l'identifiant et cela peut être causé par le capteur!
+ *         // Les identifiants "0000" et "FFFF" doivent être considéré comme des erreurs!
+ *     }
+ *
+ *     // On doit attendre obligatoirement 100ms pour que la carte puisse fournir les informations entre chaque boucle.
+ *     delay(100);
+ * }
+ */
+
 #include <SoftwareSerial.h>
 
+/*!
+ * Représente un identifiant RFID.
+ */
 class RFID_ID
 {
 private:
@@ -14,7 +70,7 @@ public:
 
   int get_bit_0() const
   {
-    return bit0;  
+    return bit0;
   }
 
   int get_bit_1() const
@@ -52,6 +108,9 @@ public:
   }
 };
 
+/*!
+ * Représente la carte RFID.
+ */
 class RFID
 {
 private:
@@ -59,21 +118,36 @@ private:
   int last_data[11];
   RFID_ID current_id;
   int last_state = 0;
-  
+
 public:
   RFID(int pin1, int pin2) : _handle(pin1, pin2), current_id(0, 0, 0, 0)
   {}
 
+  /*!
+   * Donne l'instance de la connexion Serial.
+   *
+   * @return L'instance de la connexion Serial.
+   */
   const SoftwareSerial &get_handle() const
   {
     return _handle;
   }
 
+  /*!
+   * Donne le tableau des données récupérées à la dernière mise à jour.
+   *
+   * @return Le tableau des dernières données de taille 11.
+   */
   const int *get_last_data() const
   {
     return last_data;
   }
 
+  /*!
+   * Donne le dernier identifiant détecté.
+   *
+   * @return Le dernier identifiant détecté.
+   */
   const RFID_ID &get_current_id() const
   {
     return current_id;
@@ -117,10 +191,15 @@ public:
     }
   }
 
+  /*!
+   * Fonction de mise à jour des informations de la carte.
+   */
   void update()
   {
+    // On demande les informations.
     seek();
     delay(10);
+    // On les récupère.
     parse();
     if (last_state == 0 && has_card_present()) {
       current_id = { last_data[8], last_data[7], last_data[6], last_data[5] };
@@ -132,11 +211,21 @@ public:
     if (last_state != 0 && !has_card_present()) last_state = 0;
   }
 
+  /*!
+   * Indique si le badge présent est nouveau ou non.
+   *
+   * @return True si un badge est nouveau, sinon false.
+   */
   bool has_new_card() const
   {
     return last_state == 1;
   }
 
+  /*!
+   * Indique si un badge est présent sur le capteur ou non.
+   *
+   * @return True si un badge est présent, sinon false.
+   */
   bool has_card_present() const
   {
     if (last_data[2] == 2)
@@ -145,6 +234,6 @@ public:
         return true;
       return false;
     }
-    else return true;  
+    else return true;
   }
 };
